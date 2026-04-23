@@ -1,15 +1,26 @@
-# .github/workflows/test-dispatch.yml
-
-name: Dispatch Test
+name: Dispatch Test (Phase 2)
 
 on:
   repository_dispatch:
     types: [test-connection]
 
 jobs:
-  hello:
+  debug:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Confirm connection
-        run: echo "Connection established. GitHub Actions is working."
+      - name: Show full event payload
+        run: |
+          echo "=== FULL EVENT ==="
+          echo '${{ toJson(github.event) }}'
+
+      - name: Show client payload only
+        run: |
+          echo "=== CLIENT PAYLOAD ==="
+          echo '${{ toJson(github.event.client_payload) }}'
+
+      - name: Extract fields
+        run: |
+          echo "JIRA_KEY=${{ github.event.client_payload.jira_key }}"
+          echo "SUMMARY=${{ github.event.client_payload.summary }}"
+          echo "DESCRIPTION=${{ github.event.client_payload.description }}"
