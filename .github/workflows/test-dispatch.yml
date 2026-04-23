@@ -12,6 +12,7 @@ jobs:
 
     permissions:
       contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout repo
@@ -62,23 +63,22 @@ jobs:
           git add .
           git commit -m "fix(${JIRA_KEY}): ${SUMMARY}" || echo "No changes to commit"
 
-      - name: Create or update Pull Request
-        id: pr
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "fix(${JIRA_KEY}): ${SUMMARY}"
-          branch: ai-fix/${{ env.JIRA_KEY }}
-          title: "[AI Fix] ${{ env.JIRA_KEY }} - ${{ env.SUMMARY }}"
-          body: |
-            ## AI Bug Fix Pipeline
+      - name: Create or update PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="ai-fix/${JIRA_KEY}"
 
-            **Jira Key:** ${{ env.JIRA_KEY }}
-            **Summary:** ${{ env.SUMMARY }}
+          # check if PR already exists
+          PR_URL=$(gh pr list --head "$BRANCH" --json url -q '.[0].url')
 
-            This PR was automatically generated from a Jira webhook.
-
-            ---
-            ⚠️ Do not merge without review.
-          labels: ai-fix, auto-generated
-          draft: false
+          if [ "$PR_URL" != "null" ] && [ -n "$PR_URL" ]; then
+            echo "PR already exists: $PR_URL"
+          else
+            echo "Creating PR..."
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "[AI Fix] $JIRA_KEY - $SUMMARY" \
+              --body "Auto-generated PR for $JIRA_KEY"
+          fi
