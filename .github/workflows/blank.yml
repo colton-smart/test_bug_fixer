@@ -1,0 +1,15 @@
+# .github/workflows/test-dispatch.yml
+
+name: Dispatch Test
+
+on:
+  repository_dispatch:
+    types: [test-connection]
+
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Confirm connection
+        run: echo "Connection established. GitHub Actions is working."
