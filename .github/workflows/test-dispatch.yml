@@ -18,80 +18,52 @@ jobs:
       pull-requests: write
 
     steps:
-      # ─────────────────────────────────────────────
-      # 1. Extract input payload from Jira webhook
-      # ─────────────────────────────────────────────
       - name: Extract variables
         run: |
           echo "JIRA_KEY=${{ github.event.client_payload.jira_key }}" >> $GITHUB_ENV
           echo "SUMMARY=${{ github.event.client_payload.summary }}" >> $GITHUB_ENV
           echo "BRANCH=ai-fix/${{ github.event.client_payload.jira_key }}" >> $GITHUB_ENV
+          echo "EVENT_ID=${{ github.event.client_payload.timestamp }}" >> $GITHUB_ENV
 
-      # ─────────────────────────────────────────────
-      # 2. Checkout repository codebase
-      # ─────────────────────────────────────────────
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # ─────────────────────────────────────────────
-      # 3. Ensure required GitHub labels exist
-      #    (safe to run repeatedly; idempotent)
-      # ─────────────────────────────────────────────
       - name: Ensure labels exist
         run: |
           gh label create "ai-pipeline:created" --color "0e8a16" --force || true
           gh label create "ai-pipeline:updated" --color "1d76db" --force || true
           gh label create "ai-fix" --color "5319e7" --force || true
 
-      # ─────────────────────────────────────────────
-      # 4. Create or reuse branch based on Jira issue key
-      # ─────────────────────────────────────────────
       - name: Create or reuse branch
         run: |
           git fetch origin
 
           if git ls-remote --exit-code --heads origin "$BRANCH"; then
-            echo "Branch exists remotely; checking out existing branch."
             git checkout -b "$BRANCH" origin/"$BRANCH"
           else
-            echo "Branch does not exist; creating new branch."
             git checkout -b "$BRANCH"
           fi
 
-      # ─────────────────────────────────────────────
-      # 5. Simulated change placeholder (AI step later)
-      # ─────────────────────────────────────────────
       - name: Simulate change
         run: |
           echo "Fix placeholder for ${JIRA_KEY}" > ai-fix.txt
 
-      # ─────────────────────────────────────────────
-      # 6. Commit changes (if any exist)
-      # ─────────────────────────────────────────────
       - name: Commit changes
         run: |
           git config user.name "ai-bot"
           git config user.email "ai-bot@test.local"
 
           git add .
-          git commit -m "fix(${JIRA_KEY}): ${SUMMARY}" || echo "No changes to commit"
+          git commit -m "fix(${JIRA_KEY}): ${SUMMARY}" || echo "No changes"
 
-      # ─────────────────────────────────────────────
-      # 7. Push branch to remote repository
-      # ─────────────────────────────────────────────
       - name: Push branch
         run: |
           git push origin "$BRANCH"
 
-      # ─────────────────────────────────────────────
-      # 8. Detect whether a PR already exists for this branch
-      # ─────────────────────────────────────────────
       - name: Detect existing PR
         run: |
-          set -e
-
           PR_JSON=$(gh pr list --search "$BRANCH in:head" --json number,url)
           PR_COUNT=$(echo "$PR_JSON" | jq length)
 
@@ -103,33 +75,33 @@ jobs:
             echo "PR_EXISTS=false" >> $GITHUB_ENV
           fi
 
-      # ─────────────────────────────────────────────
-      # 9. Create PR or update existing PR state
-      # ─────────────────────────────────────────────
+      - name: Prevent duplicate processing
+        if: env.PR_EXISTS == 'true'
+        run: |
+          PR_BODY=$(gh pr view "$PR_NUMBER" --json body -q .body)
+
+          if echo "$PR_BODY" | grep -q "$EVENT_ID"; then
+            echo "Already processed event"
+            exit 0
+          fi
+
       - name: Create or update PR
         run: |
           if [ "$PR_EXISTS" = "true" ]; then
-            echo "Updating existing PR: $PR_URL"
-
             gh pr edit "$PR_NUMBER" \
               --add-label "ai-pipeline:updated"
           else
-            echo "Creating new PR"
-
             gh pr create \
               --base main \
               --head "$BRANCH" \
               --title "[AI Fix] $JIRA_KEY - $SUMMARY" \
-              --body "Initial AI pipeline PR for $JIRA_KEY" \
+              --body "Initial AI pipeline PR for $JIRA_KEY\n\nProcessed event: $EVENT_ID" \
               --label "ai-fix,ai-pipeline:created"
           fi
 
-      # ─────────────────────────────────────────────
-      # 10. Append audit comment to PR timeline
-      # ─────────────────────────────────────────────
       - name: Append PR audit note
         run: |
           if [ "$PR_EXISTS" = "true" ]; then
             gh pr comment "$PR_NUMBER" \
-              --body "🔄 Jira update received for ${JIRA_KEY} at $(date -u)."
+              --body "🔄 Jira update received for ${JIRA_KEY} at $(date -u)\nProcessed event: ${EVENT_ID}"
           fi
