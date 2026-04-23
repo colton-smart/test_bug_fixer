@@ -25,7 +25,6 @@ jobs:
         run: |
           echo "JIRA_KEY=${{ github.event.client_payload.jira_key }}" >> $GITHUB_ENV
           echo "SUMMARY=${{ github.event.client_payload.summary }}" >> $GITHUB_ENV
-
           echo "BRANCH=ai-fix/${{ github.event.client_payload.jira_key }}" >> $GITHUB_ENV
 
       # ─────────────────────────────────────────────
@@ -44,7 +43,7 @@ jobs:
           git fetch origin
 
           if git ls-remote --exit-code --heads origin "$BRANCH"; then
-            echo "Branch exists remotely. Checking it out."
+            echo "Branch exists remotely. Checking out."
             git checkout -b "$BRANCH" origin/"$BRANCH"
           else
             echo "Creating new branch."
@@ -77,9 +76,9 @@ jobs:
           git push origin "$BRANCH"
 
       # ─────────────────────────────────────────────
-      # 7. Detect existing PR (idempotency layer)
+      # 7. Detect existing PR (safe + deterministic)
       # ─────────────────────────────────────────────
-      - name: Detect existing PR state
+      - name: Detect existing PR
         run: |
           set -e
 
@@ -88,18 +87,15 @@ jobs:
           PR_COUNT=$(echo "$PR_JSON" | jq length)
 
           if [ "$PR_COUNT" -gt 0 ]; then
-            PR_NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number')
-            PR_URL=$(echo "$PR_JSON" | jq -r '.[0].url')
-
             echo "PR_EXISTS=true" >> $GITHUB_ENV
-            echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
-            echo "PR_URL=$PR_URL" >> $GITHUB_ENV
+            echo "PR_NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number')" >> $GITHUB_ENV
+            echo "PR_URL=$(echo "$PR_JSON" | jq -r '.[0].url')" >> $GITHUB_ENV
           else
             echo "PR_EXISTS=false" >> $GITHUB_ENV
           fi
 
       # ─────────────────────────────────────────────
-      # 8. Create or update PR
+      # 8. Create or update PR (NO label deletion)
       # ─────────────────────────────────────────────
       - name: Create or update PR
         run: |
@@ -107,7 +103,6 @@ jobs:
             echo "Updating existing PR: $PR_URL"
 
             gh pr edit "$PR_NUMBER" \
-              --remove-label "ai-pipeline:created" \
               --add-label "ai-pipeline:updated"
           else
             echo "Creating new PR"
@@ -117,7 +112,7 @@ jobs:
               --head "$BRANCH" \
               --title "[AI Fix] $JIRA_KEY - $SUMMARY" \
               --body "Initial AI pipeline PR for $JIRA_KEY" \
-              --label "ai-pipeline:created,ai-fix"
+              --label "ai-fix,ai-pipeline:created"
           fi
 
       # ─────────────────────────────────────────────
@@ -127,5 +122,5 @@ jobs:
         run: |
           if [ "$PR_EXISTS" = "true" ]; then
             gh pr comment "$PR_NUMBER" \
-              --body "Jira update received for ${JIRA_KEY} at $(date -u)."
+              --body "🔄 Jira update received for ${JIRA_KEY} at $(date -u)."
           fi
