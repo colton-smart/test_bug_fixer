@@ -1,4 +1,4 @@
-name: AI Pipeline Debug (Phase 3)
+name: AI Pipeline Debug (Phase 4)
 
 on:
   repository_dispatch:
@@ -7,23 +7,38 @@ on:
       - jira-bug-updated
 
 jobs:
-  debug:
+  build-branch:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Dump event action
-        run: |
-          echo "EVENT ACTION: ${{ github.event.action }}"
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Dump payload
+      - name: Extract variables
         run: |
-          echo '${{ toJson(github.event.client_payload) }}'
+          echo "JIRA_KEY=${{ github.event.client_payload.jira_key }}" >> $GITHUB_ENV
+          echo "SUMMARY=${{ github.event.client_payload.summary }}" >> $GITHUB_ENV
 
-      - name: Extract values
+      - name: Create branch
         run: |
-          echo "JIRA_KEY: ${{ github.event.client_payload.jira_key }}"
-          echo "SUMMARY: ${{ github.event.client_payload.summary }}"
+          BRANCH="ai-fix/${JIRA_KEY}"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          git checkout -b "$BRANCH"
 
-      - name: Pipeline status
+      - name: Simulate change
         run: |
-          echo "PIPELINE STATUS: DISPATCH RECEIVED - READY FOR PROCESSING"
+          echo "Fix placeholder for ${JIRA_KEY}" > ai-fix.txt
+
+      - name: Commit changes
+        run: |
+          git config user.name "ai-bot"
+          git config user.email "ai-bot@test.local"
+
+          git add .
+          git commit -m "fix(${JIRA_KEY}): ${SUMMARY}" || echo "No changes to commit"
+
+      - name: Push branch
+        run: |
+          git push origin "$BRANCH"
