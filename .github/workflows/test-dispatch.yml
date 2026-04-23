@@ -19,7 +19,7 @@ jobs:
 
     steps:
       # ─────────────────────────────────────────────
-      # 1. Extract Jira payload (source of truth)
+      # 1. Extract input payload from Jira webhook
       # ─────────────────────────────────────────────
       - name: Extract variables
         run: |
@@ -28,7 +28,7 @@ jobs:
           echo "BRANCH=ai-fix/${{ github.event.client_payload.jira_key }}" >> $GITHUB_ENV
 
       # ─────────────────────────────────────────────
-      # 2. Checkout repo
+      # 2. Checkout repository codebase
       # ─────────────────────────────────────────────
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -36,29 +36,39 @@ jobs:
           fetch-depth: 0
 
       # ─────────────────────────────────────────────
-      # 3. Create or reuse branch (idempotent)
+      # 3. Ensure required GitHub labels exist
+      #    (safe to run repeatedly; idempotent)
+      # ─────────────────────────────────────────────
+      - name: Ensure labels exist
+        run: |
+          gh label create "ai-pipeline:created" --color "0e8a16" --force || true
+          gh label create "ai-pipeline:updated" --color "1d76db" --force || true
+          gh label create "ai-fix" --color "5319e7" --force || true
+
+      # ─────────────────────────────────────────────
+      # 4. Create or reuse branch based on Jira issue key
       # ─────────────────────────────────────────────
       - name: Create or reuse branch
         run: |
           git fetch origin
 
           if git ls-remote --exit-code --heads origin "$BRANCH"; then
-            echo "Branch exists remotely. Checking out."
+            echo "Branch exists remotely; checking out existing branch."
             git checkout -b "$BRANCH" origin/"$BRANCH"
           else
-            echo "Creating new branch."
+            echo "Branch does not exist; creating new branch."
             git checkout -b "$BRANCH"
           fi
 
       # ─────────────────────────────────────────────
-      # 4. Simulate change (placeholder for AI step)
+      # 5. Simulated change placeholder (AI step later)
       # ─────────────────────────────────────────────
       - name: Simulate change
         run: |
           echo "Fix placeholder for ${JIRA_KEY}" > ai-fix.txt
 
       # ─────────────────────────────────────────────
-      # 5. Commit changes
+      # 6. Commit changes (if any exist)
       # ─────────────────────────────────────────────
       - name: Commit changes
         run: |
@@ -69,21 +79,20 @@ jobs:
           git commit -m "fix(${JIRA_KEY}): ${SUMMARY}" || echo "No changes to commit"
 
       # ─────────────────────────────────────────────
-      # 6. Push branch
+      # 7. Push branch to remote repository
       # ─────────────────────────────────────────────
       - name: Push branch
         run: |
           git push origin "$BRANCH"
 
       # ─────────────────────────────────────────────
-      # 7. Detect existing PR (safe + deterministic)
+      # 8. Detect whether a PR already exists for this branch
       # ─────────────────────────────────────────────
       - name: Detect existing PR
         run: |
           set -e
 
           PR_JSON=$(gh pr list --search "$BRANCH in:head" --json number,url)
-
           PR_COUNT=$(echo "$PR_JSON" | jq length)
 
           if [ "$PR_COUNT" -gt 0 ]; then
@@ -95,7 +104,7 @@ jobs:
           fi
 
       # ─────────────────────────────────────────────
-      # 8. Create or update PR (NO label deletion)
+      # 9. Create PR or update existing PR state
       # ─────────────────────────────────────────────
       - name: Create or update PR
         run: |
@@ -116,7 +125,7 @@ jobs:
           fi
 
       # ─────────────────────────────────────────────
-      # 9. Audit trail comment
+      # 10. Append audit comment to PR timeline
       # ─────────────────────────────────────────────
       - name: Append PR audit note
         run: |
