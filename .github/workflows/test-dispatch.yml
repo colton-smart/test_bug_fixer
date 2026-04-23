@@ -6,102 +6,168 @@ on:
       - jira-bug-created
       - jira-bug-updated
 
+# Top-level permissions so GITHUB_TOKEN actually receives these scopes
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   build-branch:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    permissions:
-      contents: write
-      pull-requests: write
-
     steps:
+
+      # ── 1. EXTRACT VARIABLES ────────────────────────────────────────────
+      # SUMMARY uses the EOF heredoc syntax so special characters
+      # (quotes, backticks, dollar signs) don't break downstream shell steps.
       - name: Extract variables
         run: |
           echo "JIRA_KEY=${{ github.event.client_payload.jira_key }}" >> $GITHUB_ENV
-          echo "SUMMARY=${{ github.event.client_payload.summary }}" >> $GITHUB_ENV
           echo "BRANCH=ai-fix/${{ github.event.client_payload.jira_key }}" >> $GITHUB_ENV
           echo "EVENT_ID=${{ github.event.client_payload.timestamp }}" >> $GITHUB_ENV
+          echo 'SUMMARY<<EOF' >> $GITHUB_ENV
+          echo "${{ github.event.client_payload.summary }}" >> $GITHUB_ENV
+          echo 'EOF' >> $GITHUB_ENV
 
+      # ── 2. CHECKOUT ─────────────────────────────────────────────────────
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # ── 3. ENSURE LABELS EXIST ──────────────────────────────────────────
+      # --force makes this idempotent — safe to run on every trigger
       - name: Ensure labels exist
         run: |
           gh label create "ai-pipeline:created" --color "0e8a16" --force || true
           gh label create "ai-pipeline:updated" --color "1d76db" --force || true
-          gh label create "ai-fix" --color "5319e7" --force || true
+          gh label create "ai-fix"              --color "5319e7" --force || true
 
+      # ── 4. CREATE OR REUSE BRANCH ───────────────────────────────────────
       - name: Create or reuse branch
         run: |
           git fetch origin
-
           if git ls-remote --exit-code --heads origin "$BRANCH"; then
+            echo "Branch exists remotely — checking out"
             git checkout -b "$BRANCH" origin/"$BRANCH"
           else
+            echo "Branch does not exist — creating"
             git checkout -b "$BRANCH"
           fi
 
+      # ── 5. SIMULATE CHANGE (placeholder for Q Developer later) ──────────
       - name: Simulate change
         run: |
           echo "Fix placeholder for ${JIRA_KEY}" > ai-fix.txt
 
+      # ── 6. COMMIT ───────────────────────────────────────────────────────
       - name: Commit changes
         run: |
           git config user.name "ai-bot"
           git config user.email "ai-bot@test.local"
-
           git add .
-          git commit -m "fix(${JIRA_KEY}): ${SUMMARY}" || echo "No changes"
+          git commit -m "fix(${JIRA_KEY}): ${SUMMARY}" || echo "Nothing to commit"
 
+      # ── 7. PUSH ─────────────────────────────────────────────────────────
       - name: Push branch
         run: |
           git push origin "$BRANCH"
 
+      # ── 8. DETECT EXISTING PR ───────────────────────────────────────────
+      # Uses --head for exact branch matching instead of a text search query
       - name: Detect existing PR
         run: |
-          PR_JSON=$(gh pr list --search "$BRANCH in:head" --json number,url)
+          PR_JSON=$(gh pr list --head "$BRANCH" --json number,url)
           PR_COUNT=$(echo "$PR_JSON" | jq length)
 
           if [ "$PR_COUNT" -gt 0 ]; then
-            echo "PR_EXISTS=true" >> $GITHUB_ENV
-            echo "PR_NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number')" >> $GITHUB_ENV
-            echo "PR_URL=$(echo "$PR_JSON" | jq -r '.[0].url')" >> $GITHUB_ENV
+            echo "PR_EXISTS=true"                                         >> $GITHUB_ENV
+            echo "PR_NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number')"   >> $GITHUB_ENV
+            echo "PR_URL=$(echo "$PR_JSON"    | jq -r '.[0].url')"      >> $GITHUB_ENV
           else
             echo "PR_EXISTS=false" >> $GITHUB_ENV
+            echo "PR_NUMBER="      >> $GITHUB_ENV
+            echo "PR_URL="         >> $GITHUB_ENV
           fi
 
-      - name: Prevent duplicate processing
-        if: env.PR_EXISTS == 'true'
+      # ── 9. DETECT DUPLICATE EVENT ───────────────────────────────────────
+      # Checks whether this exact EVENT_ID has already been recorded in the
+      # PR body. Sets DUPLICATE_EVENT=true to gate all remaining steps.
+      - name: Detect duplicate event
         run: |
-          PR_BODY=$(gh pr view "$PR_NUMBER" --json body -q .body)
-
-          if echo "$PR_BODY" | grep -q "$EVENT_ID"; then
-            echo "Already processed event"
-            exit 0
+          if [ "$PR_EXISTS" = "true" ]; then
+            PR_BODY=$(gh pr view "$PR_NUMBER" --json body -q .body)
+            if echo "$PR_BODY" | grep -q "$EVENT_ID"; then
+              echo "Duplicate event detected — skipping remaining steps"
+              echo "DUPLICATE_EVENT=true" >> $GITHUB_ENV
+            else
+              echo "DUPLICATE_EVENT=false" >> $GITHUB_ENV
+            fi
+          else
+            echo "DUPLICATE_EVENT=false" >> $GITHUB_ENV
           fi
 
+      # ── 10. CREATE OR UPDATE PR ─────────────────────────────────────────
+      # Gated on DUPLICATE_EVENT so a Jira retry never creates a second PR
+      # or spams the existing one.
+      # PR body is written to a temp file to safely handle newlines and
+      # special characters without shell escaping gymnastics.
       - name: Create or update PR
+        if: env.DUPLICATE_EVENT != 'true'
         run: |
           if [ "$PR_EXISTS" = "true" ]; then
             gh pr edit "$PR_NUMBER" \
               --add-label "ai-pipeline:updated"
           else
+            cat > /tmp/pr-body.md << EOF
+          Initial AI pipeline PR for ${JIRA_KEY}
+
+          Processed event: ${EVENT_ID}
+
+          ---
+          ⚠️ This PR was generated by the AI bug fix pipeline. A human should review before merging.
+          EOF
+
             gh pr create \
               --base main \
               --head "$BRANCH" \
-              --title "[AI Fix] $JIRA_KEY - $SUMMARY" \
-              --body "Initial AI pipeline PR for $JIRA_KEY\n\nProcessed event: $EVENT_ID" \
+              --title "[AI Fix] ${JIRA_KEY} - ${SUMMARY}" \
+              --body-file /tmp/pr-body.md \
               --label "ai-fix,ai-pipeline:created"
           fi
 
+      # ── 11. APPEND AUDIT COMMENT ON UPDATES ─────────────────────────────
+      # Also gated on duplicate check — only fires when there's something
+      # new to record.
       - name: Append PR audit note
+        if: env.DUPLICATE_EVENT != 'true' && env.PR_EXISTS == 'true'
         run: |
-          if [ "$PR_EXISTS" = "true" ]; then
-            gh pr comment "$PR_NUMBER" \
-              --body "🔄 Jira update received for ${JIRA_KEY} at $(date -u)\nProcessed event: ${EVENT_ID}"
-          fi
+          cat > /tmp/comment-body.md << EOF
+          🔄 Jira update received for **${JIRA_KEY}** at $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+
+          Processed event: ${EVENT_ID}
+          EOF
+
+          gh pr comment "$PR_NUMBER" --body-file /tmp/comment-body.md
+
+      # ── 12. SUMMARY ─────────────────────────────────────────────────────
+      # Always runs — gives you a clean read of what happened without
+      # digging through individual step logs.
+      - name: Summary
+        if: always()
+        run: |
+          echo "======================================="
+          echo "        AI Pipeline Summary"
+          echo "======================================="
+          echo "Jira Key   : ${JIRA_KEY}"
+          echo "Branch     : ${BRANCH}"
+          echo "PR Exists  : ${PR_EXISTS:-unknown}"
+          echo "PR Number  : ${PR_NUMBER:-n/a}"
+          echo "PR URL     : ${PR_URL:-n/a}"
+          echo "Duplicate  : ${DUPLICATE_EVENT:-false}"
+          echo "Event ID   : ${EVENT_ID}"
+          echo "======================================="
