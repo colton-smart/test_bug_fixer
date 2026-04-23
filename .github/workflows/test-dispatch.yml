@@ -24,11 +24,25 @@ jobs:
           echo "JIRA_KEY=${{ github.event.client_payload.jira_key }}" >> $GITHUB_ENV
           echo "SUMMARY=${{ github.event.client_payload.summary }}" >> $GITHUB_ENV
 
-      - name: Create branch
+      - name: Create or reuse branch (idempotent)
         run: |
           BRANCH="ai-fix/${JIRA_KEY}"
+
+          echo "TARGET BRANCH: $BRANCH"
+
+          # Fetch remote branches
+          git fetch origin
+
+          # Check if branch exists remotely
+          if git ls-remote --exit-code --heads origin "$BRANCH"; then
+            echo "Branch exists remotely. Checking it out."
+            git checkout -b "$BRANCH" origin/"$BRANCH"
+          else
+            echo "Branch does not exist. Creating new branch."
+            git checkout -b "$BRANCH"
+          fi
+
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-          git checkout -b "$BRANCH"
 
       - name: Simulate change
         run: |
