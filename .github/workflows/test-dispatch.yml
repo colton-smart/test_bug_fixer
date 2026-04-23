@@ -1,26 +1,27 @@
-name: Dispatch Test (Phase 2)
+name: AI Pipeline Debug (Phase 3)
 
 on:
   repository_dispatch:
-    types: [test-connection]
+    types: [jira-bug-created, jira-bug-updated]
 
 jobs:
   debug:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Show full event payload
-        run: |
-          echo "=== FULL EVENT ==="
-          echo '${{ toJson(github.event) }}'
+      - name: Show event type
+        run: echo "EVENT=${{ github.event.action }}"
 
-      - name: Show client payload only
-        run: |
-          echo "=== CLIENT PAYLOAD ==="
-          echo '${{ toJson(github.event.client_payload) }}'
+      - name: Show full payload
+        run: echo '${{ toJson(github.event.client_payload) }}'
 
-      - name: Extract fields
+      - name: Simulate routing decision
         run: |
-          echo "JIRA_KEY=${{ github.event.client_payload.jira_key }}"
-          echo "SUMMARY=${{ github.event.client_payload.summary }}"
-          echo "DESCRIPTION=${{ github.event.client_payload.description }}"
+          JIRA_KEY="${{ github.event.client_payload.jira_key }}"
+          SUMMARY="${{ github.event.client_payload.summary }}"
+
+          echo "Processing issue: $JIRA_KEY"
+          echo "Summary: $SUMMARY"
+
+      - name: Confirm pipeline stage
+        run: echo "Pipeline stage: DISPATCH RECEIVED → READY FOR PROCESSING"
