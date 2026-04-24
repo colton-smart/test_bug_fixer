@@ -6,7 +6,6 @@ on:
       - jira-bug-created
       - jira-bug-updated
 
-# Top-level permissions so GITHUB_TOKEN actually receives these scopes
 permissions:
   contents: write
   pull-requests: write
@@ -22,13 +21,12 @@ jobs:
     steps:
 
       # ── 1. EXTRACT VARIABLES ────────────────────────────────────────────
-      # SUMMARY uses the EOF heredoc syntax so special characters
-      # (quotes, backticks, dollar signs) don't break downstream shell steps.
       - name: Extract variables
         run: |
           echo "JIRA_KEY=${{ github.event.client_payload.jira_key }}" >> $GITHUB_ENV
           echo "BRANCH=ai-fix/${{ github.event.client_payload.jira_key }}" >> $GITHUB_ENV
           echo "EVENT_ID=${{ github.event.client_payload.timestamp }}" >> $GITHUB_ENV
+
           echo 'SUMMARY<<EOF' >> $GITHUB_ENV
           echo "${{ github.event.client_payload.summary }}" >> $GITHUB_ENV
           echo 'EOF' >> $GITHUB_ENV
@@ -40,7 +38,6 @@ jobs:
           fetch-depth: 0
 
       # ── 3. ENSURE LABELS EXIST ──────────────────────────────────────────
-      # --force makes this idempotent — safe to run on every trigger
       - name: Ensure labels exist
         run: |
           gh label create "ai-pipeline:created" --color "0e8a16" --force || true
@@ -59,54 +56,57 @@ jobs:
             git checkout -b "$BRANCH"
           fi
 
-      # ── 5. SIMULATE CHANGE (placeholder for Q Developer later) ──────────
+      # ── 5. GENERATE ARTIFACT ────────────────────────────────────────────
       - name: Generate AI prompt artifact
         run: |
           mkdir -p ai-artifacts
-      
-          cat > ai-artifacts/ai-prompt.md << 'EOF'
+
+          cat > ai-artifacts/ai-prompt.md << EOF
           # AI Bug Fix Prompt
-          
+
           ## Jira Key
-          __JIRA_KEY__
-          
+          ${JIRA_KEY}
+
           ## Summary
-          __SUMMARY__
-          
+          ${SUMMARY}
+
           ## Description
-          __DESCRIPTION__
-          
+          ${{ github.event.client_payload.description }}
+
           ---
-      
+
           ## Instructions to AI
-          
+
           You are a senior software engineer working in a legacy PHP Zend Framework 1 MVC application.
-          
+
           Your task:
           - Identify the root cause of the issue
           - Propose the minimal fix
           - Do not refactor unrelated code
           - Do not modify tests
-          
+
           Output:
           - A clear explanation of the issue
           - A suggested fix (code or pseudocode)
           - Any risks or assumptions
-          
+
           ---
-          
+
           ## Metadata
-          
-          - Generated at: __TIMESTAMP__
-          - Event ID: __EVENT_ID__
+
+          - Generated at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          - Event ID: ${EVENT_ID}
           EOF
-          
-              # Replace placeholders safely
-              sed -i "s|__JIRA_KEY__|${JIRA_KEY}|g" ai-artifacts/ai-prompt.md
-              sed -i "s|__SUMMARY__|${SUMMARY}|g" ai-artifacts/ai-prompt.md
-              sed -i "s|__DESCRIPTION__|${{ github.event.client_payload.description }}|g" ai-artifacts/ai-prompt.md
-              sed -i "s|__EVENT_ID__|${EVENT_ID}|g" ai-artifacts/ai-prompt.md
-              sed -i "s|__TIMESTAMP__|$(date -u '+%Y-%m-%d %H:%M:%S UTC')|g" ai-artifacts/ai-prompt.md
+
+      # ── 6. COMMIT CHANGES ───────────────────────────────────────────────
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add ai-artifacts/ai-prompt.md
+
+          git commit -m "AI artifact for ${JIRA_KEY} (${EVENT_ID})" || echo "No changes to commit"
 
       # ── 7. PUSH ─────────────────────────────────────────────────────────
       - name: Push branch
@@ -114,14 +114,13 @@ jobs:
           git push origin "$BRANCH"
 
       # ── 8. DETECT EXISTING PR ───────────────────────────────────────────
-      # Uses --head for exact branch matching instead of a text search query
       - name: Detect existing PR
         run: |
           PR_JSON=$(gh pr list --head "$BRANCH" --json number,url)
           PR_COUNT=$(echo "$PR_JSON" | jq length)
 
           if [ "$PR_COUNT" -gt 0 ]; then
-            echo "PR_EXISTS=true"                                         >> $GITHUB_ENV
+            echo "PR_EXISTS=true"                                       >> $GITHUB_ENV
             echo "PR_NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number')"   >> $GITHUB_ENV
             echo "PR_URL=$(echo "$PR_JSON"    | jq -r '.[0].url')"      >> $GITHUB_ENV
           else
@@ -131,8 +130,6 @@ jobs:
           fi
 
       # ── 9. DETECT DUPLICATE EVENT ───────────────────────────────────────
-      # Checks whether this exact EVENT_ID has already been recorded in the
-      # PR body. Sets DUPLICATE_EVENT=true to gate all remaining steps.
       - name: Detect duplicate event
         run: |
           if [ "$PR_EXISTS" = "true" ]; then
@@ -148,10 +145,6 @@ jobs:
           fi
 
       # ── 10. CREATE OR UPDATE PR ─────────────────────────────────────────
-      # Gated on DUPLICATE_EVENT so a Jira retry never creates a second PR
-      # or spams the existing one.
-      # PR body is written to a temp file to safely handle newlines and
-      # special characters without shell escaping gymnastics.
       - name: Create or update PR
         if: env.DUPLICATE_EVENT != 'true'
         run: |
@@ -177,8 +170,6 @@ jobs:
           fi
 
       # ── 11. APPEND AUDIT COMMENT ON UPDATES ─────────────────────────────
-      # Also gated on duplicate check — only fires when there's something
-      # new to record.
       - name: Append PR audit note
         if: env.DUPLICATE_EVENT != 'true' && env.PR_EXISTS == 'true'
         run: |
@@ -191,8 +182,6 @@ jobs:
           gh pr comment "$PR_NUMBER" --body-file /tmp/comment-body.md
 
       # ── 12. SUMMARY ─────────────────────────────────────────────────────
-      # Always runs — gives you a clean read of what happened without
-      # digging through individual step logs.
       - name: Summary
         if: always()
         run: |
