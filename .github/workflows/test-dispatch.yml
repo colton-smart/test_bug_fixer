@@ -60,17 +60,53 @@ jobs:
           fi
 
       # ── 5. SIMULATE CHANGE (placeholder for Q Developer later) ──────────
-      - name: Simulate change
+      - name: Generate AI prompt artifact
         run: |
-          echo "Fix placeholder for ${JIRA_KEY}" > ai-fix.txt
-
-      # ── 6. COMMIT ───────────────────────────────────────────────────────
-      - name: Commit changes
-        run: |
-          git config user.name "ai-bot"
-          git config user.email "ai-bot@test.local"
-          git add .
-          git commit -m "fix(${JIRA_KEY}): ${SUMMARY}" || echo "Nothing to commit"
+          mkdir -p ai-artifacts
+      
+          cat > ai-artifacts/ai-prompt.md << 'EOF'
+          # AI Bug Fix Prompt
+          
+          ## Jira Key
+          __JIRA_KEY__
+          
+          ## Summary
+          __SUMMARY__
+          
+          ## Description
+          __DESCRIPTION__
+          
+          ---
+      
+          ## Instructions to AI
+          
+          You are a senior software engineer working in a legacy PHP Zend Framework 1 MVC application.
+          
+          Your task:
+          - Identify the root cause of the issue
+          - Propose the minimal fix
+          - Do not refactor unrelated code
+          - Do not modify tests
+          
+          Output:
+          - A clear explanation of the issue
+          - A suggested fix (code or pseudocode)
+          - Any risks or assumptions
+          
+          ---
+          
+          ## Metadata
+          
+          - Generated at: __TIMESTAMP__
+          - Event ID: __EVENT_ID__
+          EOF
+          
+              # Replace placeholders safely
+              sed -i "s|__JIRA_KEY__|${JIRA_KEY}|g" ai-artifacts/ai-prompt.md
+              sed -i "s|__SUMMARY__|${SUMMARY}|g" ai-artifacts/ai-prompt.md
+              sed -i "s|__DESCRIPTION__|${{ github.event.client_payload.description }}|g" ai-artifacts/ai-prompt.md
+              sed -i "s|__EVENT_ID__|${EVENT_ID}|g" ai-artifacts/ai-prompt.md
+              sed -i "s|__TIMESTAMP__|$(date -u '+%Y-%m-%d %H:%M:%S UTC')|g" ai-artifacts/ai-prompt.md
 
       # ── 7. PUSH ─────────────────────────────────────────────────────────
       - name: Push branch
