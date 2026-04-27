@@ -7,7 +7,7 @@ BUGS-10
 Make Member Benefits Widget button different
 
 ## Description
-On the member benefits widget the current color of the button at the bottom is blue. The button says “View Complete List of Exclusive Member Benefits”. We want the color of that button to be #f542c2 and we want it to say “View Complete List of Excl Member Benefits”.
+On the member benefits widget the current color of the button at the bottom is blue. The button says “View Complete List of Exclusive Member Benefits”. We want the color of that button to be #4cba27 and we want it to say “View Complete List of Excl Member Benefits”.
 
 ---
 
@@ -30,5 +30,5 @@ Output:
 
 ## Metadata
 
-- Generated at: 2026-04-27 16:26:01 UTC
-- Event ID: 1777307148329
+- Generated at: 2026-04-27 16:44:33 UTC
+- Event ID: 1777308263584
